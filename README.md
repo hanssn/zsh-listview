@@ -18,7 +18,7 @@ Displays real-time, non-intrusive unique history suggestions below your prompt a
 
 Clone the repo:
 ```zsh
-git clone https://github.com/<your-username>/zsh-listview.git ~/.zsh/zsh-listview
+git clone https://github.com/hanssn/zsh-listview.git ~/.zsh/zsh-listview
 ```
 
 Add to `~/.zshrc`:
@@ -29,7 +29,7 @@ source ~/.zsh/zsh-listview/zsh-listview.plugin.zsh
 ### Oh My Zsh
 
 ```zsh
-git clone https://github.com/<your-username>/zsh-listview.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-listview
+git clone https://github.com/hanssn/zsh-listview.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-listview
 ```
 Add `zsh-listview` to your plugins array in `~/.zshrc`:
 ```zsh
