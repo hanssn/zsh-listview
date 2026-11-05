@@ -77,25 +77,23 @@ _zsh_listview_update() {
 
   local pattern="${(b)BUFFER}*"
   local -a matched
+  # (Mao) puts newest history entries first (keys ordered descending)
   matched=( ${(Mao)history:#$~pattern} )
 
   typeset -A seen
   local line clean_line
   local -i scanned=0 max_scan=$ZSH_LISTVIEW_MAX_SEARCH
 
-  local -i total=${#matched}
-  local -i i
-  for (( i=total; i>=1; i-- )); do
-    line="${matched[i]}"
+  # Iterate forward: newest history first
+  for line in "${matched[@]}"; do
     [[ "$line" == "$BUFFER" ]] && continue
 
     clean_line="${line//$'\n'/ \\n }"
     if (( ! seen[$clean_line] )); then
       seen[$clean_line]=1
       _zsh_listview_items+=("$clean_line")
+      (( ++scanned >= max_scan )) && break
     fi
-
-    (( ++scanned >= max_scan )) && break
   done
 
   _zsh_listview_render
