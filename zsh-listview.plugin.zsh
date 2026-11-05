@@ -1,11 +1,12 @@
 # -*- mode: zsh; sh-indentation: 2; indent-tabs-mode: nil -*-
 # zsh-listview: PSReadLine ListView-style inline history suggestions for Zsh
-# Zero dependencies. Pure native ZLE.
+# Zero dependencies. Pure native ZLE. Simple & Linear.
 
 autoload -Uz add-zle-hook-widget
 
 # User configurable options with sensible defaults
-: ${ZSH_LISTVIEW_MAX_ITEMS:=4}
+: ${ZSH_LISTVIEW_PAGE_SIZE:=4}
+: ${ZSH_LISTVIEW_MAX_SEARCH:=1000}
 : ${ZSH_LISTVIEW_MIN_CHARS:=2}
 : ${ZSH_LISTVIEW_POINTER:="> "}
 : ${ZSH_LISTVIEW_INDENT:="  "}
@@ -14,78 +15,101 @@ typeset -ga _zsh_listview_items
 typeset -gi _zsh_listview_idx=0
 typeset -g _zsh_listview_orig_buf=""
 typeset -g _zsh_listview_last_buf=""
+typeset -gi _zsh_listview_active=0
+
+_zsh_listview_render() {
+  local count=${#_zsh_listview_items}
+  if (( count == 0 )); then
+    POSTDISPLAY=""
+    return
+  fi
+
+  local page_size=$ZSH_LISTVIEW_PAGE_SIZE
+  local sel=${_zsh_listview_idx:-1}
+  (( sel == 0 )) && sel=1
+
+  # Sliding window: 4 items per page
+  local start_idx=$(( ((sel - 1) / page_size) * page_size + 1 ))
+  local end_idx=$(( start_idx + page_size - 1 ))
+  (( end_idx > count )) && end_idx=$count
+
+  local max_w=$(( COLUMNS - 4 ))
+  (( max_w < 10 )) && max_w=80
+
+  local out="" item line_txt
+  local -i i
+  for (( i=start_idx; i<=end_idx; i++ )); do
+    item="${_zsh_listview_items[i]}"
+    (( ${#item} > max_w )) && item="${item[1,max_w-1]}…"
+    if (( i == _zsh_listview_idx )); then
+      line_txt="${ZSH_LISTVIEW_POINTER}${item}"
+    else
+      line_txt="${ZSH_LISTVIEW_INDENT}${item}"
+    fi
+    out+=$'\n'"$line_txt"
+  done
+  POSTDISPLAY="$out"
+}
 
 _zsh_listview_reset() {
   POSTDISPLAY=""
   _zsh_listview_items=()
   _zsh_listview_idx=0
+  _zsh_listview_active=0
   _zsh_listview_orig_buf=""
   _zsh_listview_last_buf=""
 }
 
 _zsh_listview_update() {
-  # If currently cycling selections, re-render cursor marker without rescanning history
-  if (( _zsh_listview_idx > 0 )); then
-    local out=""
-    local i
-    for (( i=1; i<=${#_zsh_listview_items}; i++ )); do
-      if (( i == _zsh_listview_idx )); then
-        out+=$'\n'"${ZSH_LISTVIEW_POINTER}${_zsh_listview_items[i]}"
-      else
-        out+=$'\n'"${ZSH_LISTVIEW_INDENT}${_zsh_listview_items[i]}"
-      fi
-    done
-    POSTDISPLAY="$out"
-    return
-  fi
+  # Jangan scan ulang saat user sedang memilih item dari list
+  (( _zsh_listview_active )) && return
 
-  # Skip if buffer has not changed (prevents redraw flicker)
+  # Skip jika buffer belum berubah
   [[ "$BUFFER" == "$_zsh_listview_last_buf" ]] && return
   _zsh_listview_last_buf="$BUFFER"
 
   POSTDISPLAY=""
   _zsh_listview_items=()
+  _zsh_listview_idx=0
   _zsh_listview_orig_buf="$BUFFER"
 
-  # Trigger threshold check
   [[ ${#BUFFER} -lt $ZSH_LISTVIEW_MIN_CHARS ]] && return
 
-  local line pattern
-  typeset -A seen
-  # Escape special glob characters in user input to prevent pattern syntax errors
-  pattern="${(b)BUFFER}*"
+  local pattern="${(b)BUFFER}*"
+  local -a matched
+  matched=( ${(Mao)history:#$~pattern} )
 
-  for line in ${(Oa)history}; do
-    if [[ "$line" == $~pattern && "$line" != "$BUFFER" && -z "${seen[$line]}" ]]; then
-      # Strip multiline newlines to keep list layout clean
-      local clean_line="${line//$'\n'/ \\n }"
+  typeset -A seen
+  local line clean_line
+  local -i scanned=0 max_scan=$ZSH_LISTVIEW_MAX_SEARCH
+
+  local -i total=${#matched}
+  local -i i
+  for (( i=total; i>=1; i-- )); do
+    line="${matched[i]}"
+    [[ "$line" == "$BUFFER" ]] && continue
+
+    clean_line="${line//$'\n'/ \\n }"
+    if (( ! seen[$clean_line] )); then
       seen[$clean_line]=1
       _zsh_listview_items+=("$clean_line")
-      [[ ${#_zsh_listview_items} -ge $ZSH_LISTVIEW_MAX_ITEMS ]] && break
     fi
+
+    (( ++scanned >= max_scan )) && break
   done
 
-  if [[ ${#_zsh_listview_items} -gt 0 ]]; then
-    local out=""
-    local i
-    for (( i=1; i<=${#_zsh_listview_items}; i++ )); do
-      out+=$'\n'"${ZSH_LISTVIEW_INDENT}${_zsh_listview_items[i]}"
-    done
-    POSTDISPLAY="$out"
-  fi
+  _zsh_listview_render
 }
 
 _zsh_listview_down() {
   if [[ ${#_zsh_listview_items} -gt 0 ]]; then
-    (( _zsh_listview_idx++ ))
-    if (( _zsh_listview_idx > ${#_zsh_listview_items} )); then
-      _zsh_listview_idx=0
-      BUFFER="$_zsh_listview_orig_buf"
-    else
+    _zsh_listview_active=1
+    if (( _zsh_listview_idx < ${#_zsh_listview_items} )); then
+      (( _zsh_listview_idx++ ))
       BUFFER="${_zsh_listview_items[_zsh_listview_idx]}"
+      CURSOR=$#BUFFER
+      _zsh_listview_render
     fi
-    CURSOR=$#BUFFER
-    _zsh_listview_last_buf="$BUFFER"
   else
     zle down-line-or-history
   fi
@@ -95,19 +119,21 @@ _zsh_listview_up() {
   if [[ ${#_zsh_listview_items} -gt 0 && _zsh_listview_idx -gt 0 ]]; then
     (( _zsh_listview_idx-- ))
     if (( _zsh_listview_idx == 0 )); then
+      _zsh_listview_active=0
       BUFFER="$_zsh_listview_orig_buf"
     else
+      _zsh_listview_active=1
       BUFFER="${_zsh_listview_items[_zsh_listview_idx]}"
     fi
     CURSOR=$#BUFFER
-    _zsh_listview_last_buf="$BUFFER"
+    _zsh_listview_render
   else
     zle up-line-or-history
   fi
 }
 
 _zsh_listview_escape() {
-  if (( _zsh_listview_idx > 0 || ${#_zsh_listview_items} > 0 )); then
+  if (( _zsh_listview_active || ${#_zsh_listview_items} > 0 )); then
     if [[ -n "$_zsh_listview_orig_buf" ]]; then
       BUFFER="$_zsh_listview_orig_buf"
       CURSOR=$#BUFFER
@@ -128,14 +154,13 @@ zle -N _zsh_listview_up
 zle -N _zsh_listview_escape
 zle -N _zsh_listview_clear
 
-# Keybindings: Arrow Down / Arrow Up / Ctrl+L (Clear Screen) / Escape
+# Keybindings: Arrow Down / Arrow Up / Ctrl+L / Escape
 bindkey '^[[B' _zsh_listview_down
 bindkey '^[OB' _zsh_listview_down
 bindkey '^[[A' _zsh_listview_up
 bindkey '^[OA' _zsh_listview_up
 bindkey '^L'   _zsh_listview_clear
 bindkey '^[ '  _zsh_listview_escape
-bindkey '^C'   _zsh_listview_escape
 
 add-zle-hook-widget line-pre-redraw _zsh_listview_update
 add-zle-hook-widget line-finish     _zsh_listview_reset
